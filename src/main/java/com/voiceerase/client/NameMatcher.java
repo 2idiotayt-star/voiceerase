@@ -22,6 +22,7 @@ import java.util.Set;
 /**
  * Transforma o que foi falado em "coisas do Minecraft" usando os nomes traduzidos
  * no idioma do jogo (coloque o jogo em Portugues (Brasil)!).
+ * Ordem: apelidos (aliases.txt) -> nomes exatos -> nomes parecidos (tolera erro de pronuncia).
  * Precisa rodar na thread principal do cliente.
  */
 public final class NameMatcher {
@@ -31,6 +32,7 @@ public final class NameMatcher {
 
     private static Map<String, Group> dict;
     private static List<String> sortedNames;
+    private static List<String> fuzzyNames;
     private static String dictLang;
 
     public static String norm(String s) {
@@ -76,6 +78,12 @@ public final class NameMatcher {
         sortedNames = new ArrayList<>(dict.keySet());
         // nomes maiores primeiro: "pedra lisa" ganha de "pedra"
         sortedNames.sort(Comparator.comparingInt(String::length).reversed());
+
+        // candidatos para busca aproximada: nomes de uma palavra so, com 6+ letras
+        fuzzyNames = new ArrayList<>();
+        for (String n : sortedNames) {
+            if (n.length() >= 6 && n.indexOf(' ') < 0) fuzzyNames.add(n);
+        }
     }
 
     private static Group group(String translationKey) {
@@ -89,14 +97,62 @@ public final class NameMatcher {
         ensureDict();
         List<Group> out = new ArrayList<>();
         String padded = " " + norm(spoken) + " ";
+
+        // 1) apelidos (arquivo aliases.txt)
+        List<Map.Entry<String, String>> aliases = new ArrayList<>(Aliases.get().entrySet());
+        aliases.sort((a, b) -> b.getKey().length() - a.getKey().length());
+        for (Map.Entry<String, String> e : aliases) {
+            padded = consume(padded, e.getKey(), dict.get(e.getValue()), out);
+        }
+
+        // 2) nomes exatos
         for (String name : sortedNames) {
-            String needle = " " + name + " ";
-            int idx = padded.indexOf(needle);
-            if (idx < 0) continue;
-            out.add(dict.get(name));
-            // consome o trecho para nomes menores nao casarem dentro dele
-            padded = padded.substring(0, idx + 1) + " ".repeat(name.length()) + padded.substring(idx + 1 + name.length());
+            padded = consume(padded, name, dict.get(name), out);
+        }
+
+        // 3) nomes parecidos (erro de pronuncia: "creper" -> "creeper")
+        for (String tok : padded.trim().split("\\s+")) {
+            if (tok.length() < 5) continue;
+            for (String name : fuzzyNames) {
+                if (name.charAt(0) != tok.charAt(0)) continue;
+                if (Math.abs(name.length() - tok.length()) > 2) continue;
+                int maxDist = name.length() >= 9 ? 2 : 1;
+                if (distance(tok, name, maxDist) <= maxDist) {
+                    Group g = dict.get(name);
+                    if (!out.contains(g)) out.add(g);
+                }
+            }
         }
         return out;
+    }
+
+    /** Se o nome aparece no texto, registra o grupo e apaga o trecho (pra nao casar de novo). */
+    private static String consume(String padded, String name, Group g, List<Group> out) {
+        if (g == null) return padded;
+        String needle = " " + name + " ";
+        int idx = padded.indexOf(needle);
+        if (idx < 0) return padded;
+        if (!out.contains(g)) out.add(g);
+        return padded.substring(0, idx + 1) + " ".repeat(name.length()) + padded.substring(idx + 1 + name.length());
+    }
+
+    /** Distancia de edicao (Levenshtein) com corte: devolve max+1 se passar do limite. */
+    private static int distance(String a, String b, int max) {
+        int n = a.length(), m = b.length();
+        int[] prev = new int[m + 1];
+        int[] cur = new int[m + 1];
+        for (int j = 0; j <= m; j++) prev[j] = j;
+        for (int i = 1; i <= n; i++) {
+            cur[0] = i;
+            int rowMin = cur[0];
+            for (int j = 1; j <= m; j++) {
+                int cost = a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1;
+                cur[j] = Math.min(Math.min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+                rowMin = Math.min(rowMin, cur[j]);
+            }
+            if (rowMin > max) return max + 1;
+            int[] t = prev; prev = cur; cur = t;
+        }
+        return prev[m];
     }
 }

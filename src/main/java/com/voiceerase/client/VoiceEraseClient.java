@@ -4,6 +4,9 @@ import com.voiceerase.VoiceEraseMod;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
@@ -52,6 +55,29 @@ public class VoiceEraseClient implements ClientModInitializer {
                 }
             }
         });
+
+        // /voz apelido criper = creeper
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
+                dispatcher.register(ClientCommandManager.literal("voz")
+                        .then(ClientCommandManager.literal("apelido")
+                                .then(ClientCommandManager.argument("texto", StringArgumentType.greedyString())
+                                        .executes(ctx -> {
+                                            String t = StringArgumentType.getString(ctx, "texto");
+                                            int eq = t.indexOf('=');
+                                            if (eq <= 0 || eq == t.length() - 1) {
+                                                ctx.getSource().sendFeedback(Text.literal(
+                                                        "[Voz] Use assim: /voz apelido criper = creeper"));
+                                                return 0;
+                                            }
+                                            try {
+                                                Aliases.add(t.substring(0, eq), t.substring(eq + 1));
+                                                ctx.getSource().sendFeedback(Text.literal("[Voz] Apelido salvo!"));
+                                                return 1;
+                                            } catch (Exception e) {
+                                                ctx.getSource().sendFeedback(Text.literal("[Voz] Erro ao salvar: " + e));
+                                                return 0;
+                                            }
+                                        })))));
 
         HudRenderCallback.EVENT.register(VoiceEraseClient::drawHud);
     }
